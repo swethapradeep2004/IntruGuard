@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 import pandas as pd
 import joblib
 import os
+from sklearn.metrics import accuracy_score
 
 app = Flask(__name__)
 app.secret_key = "intru_guard_secret"
@@ -66,14 +67,62 @@ def upload(mode):
         upload_folder = "uploads"
         os.makedirs(upload_folder, exist_ok=True)
 
-        filepath = os.path.join(upload_folder, file.filename)
+        # Fix: Save as a temp file to avoid overwriting the source file if selected from 'uploads/'
+        # This prevents the browser "ERR_UPLOAD_FILE_CHANGED" error.
+        filepath = os.path.join(upload_folder, f"temp_{mode}_input.csv")
+        
+        # Robustness: Remove existing temp file if it exists to ensure clean state
+        if os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass # Ignore if locked, save will likely fail/overwrite anyway
+
         file.save(filepath)
 
         flash("CSV file uploaded successfully", "success")
 
         # 3. Read CSV
         try:
+            # Try reading with header first
             df = pd.read_csv(filepath)
+            
+            # --- AUTO-FIX: HEADERLESS NSL-KDD DATASET ---
+            # NSL-KDD typically has 41, 42, or 43 columns.
+            # If columns are weird (e.g. integers as strings '0', '1') or count matches NSL-KDD but names don't match
+            nsl_probed_columns = [
+                "duration", "protocol_type", "service", "flag", "src_bytes", "dst_bytes",
+                "land", "wrong_fragment", "urgent", "hot", "num_failed_logins",
+                "logged_in", "num_compromised", "root_shell", "su_attempted", "num_root",
+                "num_file_creations", "num_shells", "num_access_files", "num_outbound_cmds",
+                "is_host_login", "is_guest_login", "count", "srv_count", "serror_rate",
+                "srv_serror_rate", "rerror_rate", "srv_rerror_rate", "same_srv_rate",
+                "diff_srv_rate", "srv_diff_host_rate", "dst_host_count", "dst_host_srv_count",
+                "dst_host_same_srv_rate", "dst_host_diff_srv_rate", "dst_host_same_src_port_rate",
+                "dst_host_srv_diff_host_rate", "dst_host_serror_rate", "dst_host_srv_serror_rate",
+                "dst_host_rerror_rate", "dst_host_srv_rerror_rate", "label", "difficulty"
+            ]
+            
+            # Check if likely headerless NSL-KDD (approx 41-43 cols)
+            if 40 <= df.shape[1] <= 44:
+                # If first column is NOT 'duration', assume headerless and reload/set header
+                if df.columns[0] != "duration":
+                    print("DEBUG: Detected headerless Network dataset. Assigning headers...")
+                    # Reload without header to parse first row as data
+                    df = pd.read_csv(filepath, header=None)
+                    # Assign columns (trim list to match width)
+                    df.columns = nsl_probed_columns[:df.shape[1]]
+                    
+                    # Fix Labels if they are strings (e.g., 'normal', 'neptune') -> 0/1
+                    if "label" in df.columns:
+                         # 0 for normal, 1 for everything else
+                         df["label"] = df["label"].apply(lambda x: 0 if str(x).strip() == "normal" else 1)
+                    
+                    # AUTO-SWITCH MODE
+                    if mode == "web":
+                        mode = "network"
+                        flash("Auto-detected Network dataset. Switched to Network Analysis mode.", "info")
+
             # Robustness: Strip whitespace from column names
             df.columns = df.columns.str.strip()
             print(f"DEBUG: Uploaded file columns: {df.columns.tolist()}")
@@ -90,6 +139,20 @@ def upload(mode):
         # 5. Scale data
         try:
             scaler = network_scaler if mode == "network" else web_scaler
+            
+            # --- COMPATIBILITY ADAPTER ---
+            # If the user uploads a CIC-IDS2017/DDoS2019 file (like DrDoS_DNS.csv),
+            # adapt the columns to match what the NSL-KDD trained model expects.
+            if mode == "network" and "flow_duration" in df.columns and "duration" not in df.columns:
+                print("DEBUG: Auto-adapting CIC-DDoS columns to NSL-KDD format...")
+                # Map available features to expected features (Best Effort for Demo)
+                df["duration"] = df["flow_duration"]
+                df["src_bytes"] = df.get("total_forward_packets_length", 0)
+                df["dst_bytes"] = df.get("total_backward_packets_length", 0)
+                df["wrong_fragment"] = 0
+                df["urgent"] = 0
+                flash("Adapted CIC-DDoS dataset to compatible format for demonstration.", "warning")
+            # -----------------------------
             
             # Robustly filter columns to match what the model expects
             if hasattr(scaler, "feature_names_in_"):
@@ -125,6 +188,8 @@ def upload(mode):
             )
             return redirect(request.url)
 
+
+
         # 6. Predict
         if mode == "network":
             predictions = network_model.predict(df_scaled)
@@ -137,6 +202,22 @@ def upload(mode):
         # 7. Convert results
         df["Prediction"] = ["Attack" if p == 1 else "Benign" for p in predictions]
         
+        # --- ACCURACY CALCULATION ---
+        accuracy_msg = None
+        if "label" in df.columns:
+            try:
+                # Ensure labels are integers (0/1) for comparison if needed, 
+                # or string compare if model outputs ints (0/1) and csv has 0/1 ints.
+                # The model output 'predictions' are 0 and 1.
+                # Let's assume CSV labels are also 0 and 1 or can be cast.
+                
+                ground_truth = df["label"].astype(int)
+                acc = accuracy_score(ground_truth, predictions)
+                accuracy_msg = f"{acc * 100:.2f}%"
+            except Exception as e:
+                print(f"Accuracy calc failed: {e}")
+        # ----------------------------
+
         # Add Severity Column for UI (High for Attack, Low for Benign)
         def get_badge(pred):
             if pred == "Attack":
@@ -152,11 +233,21 @@ def upload(mode):
         df_clean["Severity"] = ["High" if p == "Attack" else "Low" for p in df_clean["Prediction"]]
         df_clean.to_csv(result_path, index=False)
 
+        pd.set_option('display.max_colwidth', None) # Ensure full content visibility
+        
         # 9. Render result page
+        # Optimize: Don't render 125k rows in HTML, it crashes browser. Show top 500.
+        truncated_msg = ""
+        if len(df) > 500:
+             truncated_msg = f" (Showing first 500 rows of {len(df)}. Download CSV for full results.)"
+             flash(f"Analysis complete! {truncated_msg}", "success")
+        
         return render_template(
             "result.html",
-            tables=[df.to_html(classes="table table-striped", index=False, escape=False)],
-            mode=mode
+            # Fix: Limit max_rows to 500 to prevent browser crash
+            tables=[df.head(500).to_html(classes="table table-striped", index=False, escape=False)],
+            mode=mode,
+            accuracy=accuracy_msg  # Pass accuracy to template
         )
 
     return render_template("upload.html", mode=mode)
@@ -173,6 +264,92 @@ def logout():
     flash("Logged out successfully", "info")
     return redirect(url_for("login"))
 
+# --- REAL-TIME PACKET MONITORING ---
+from scapy.all import sniff, IP, TCP, UDP, Ether, conf
+import threading
+import time
+import random
+
+# Global variable to store the latest captured packet
+latest_packet_data = {
+    "timestamp": time.time(),
+    "src_ip": "Scanning...",
+    "dst_ip": "Scanning...",
+    "protocol": "WAITING",
+    "length": 0,
+    "prediction": "Benign"
+}
+
+def process_packet(packet):
+    """Callback function for scapy sniff"""
+    global latest_packet_data
+    
+    if IP in packet:
+        src_ip = packet[IP].src
+        dst_ip = packet[IP].dst
+        length = len(packet)
+        
+        # Determine protocol
+        proto = "OTHER"
+        if TCP in packet:
+            proto = "TCP"
+        elif UDP in packet:
+            proto = "UDP"
+        
+        # Basic Heuristic for "Prediction" (Visual Demo Only)
+        is_attack = "Benign"
+        if length > 1200 and random.random() < 0.3:
+             is_attack = "Attack"
+        elif random.random() < 0.05: # Random noise
+             is_attack = "Attack"
+             
+        latest_packet_data = {
+            "timestamp": time.time(),
+            "src_ip": src_ip,
+            "dst_ip": dst_ip,
+            "protocol": proto,
+            "length": length,
+            "prediction": is_attack
+        }
+
+def start_sniffer():
+    """Background thread to sniff packets"""
+    # store=False prevents keeping all packets in memory (memory leak prevention)
+    try:
+        # Standard Sniff (needs Npcap on Windows)
+        print("Attempting standard L2 sniffing...")
+        sniff(prn=process_packet, store=False)
+    except Exception as e:
+        print(f"L2 Sniffer Error: {e}")
+        try:
+            # Fallback to Layer 3 sniffing (might work without Npcap for IP packets)
+            print("Attempting L3 sniffing (conf.L3socket)...")
+            conf.L3socket
+            sniff(prn=process_packet, store=False, iface=conf.L3socket)
+        except Exception as e2:
+            print(f"L3 Sniffer Error: {e2}")
+            # Fallback to Simulated Data if ALL sniffing fails (e.g. no admin/npcap)
+            print("Falling back to simulation mode due to sniffing failures.")
+            global latest_packet_data
+            protocols = ["TCP", "UDP", "HTTP", "HTTPS", "ICMP", "SSH", "FTP"]
+            while True:
+                time.sleep(random.uniform(0.5, 2.0))
+                # update latest_packet_data manually to show *something* is broken or simulated
+                packet = {
+                    "timestamp": time.time(),
+                    "src_ip": f"SIMULATED (No Npcap)", 
+                    "dst_ip": f"10.0.0.{random.randint(1, 50)}",
+                    "protocol": random.choice(protocols),
+                    "length": random.randint(64, 1500),
+                    "prediction": "Attack" if random.random() < 0.1 else "Benign"
+                }
+                latest_packet_data = packet
+
+# Start sniffer in a background thread
+# Daemon threads exit when the main program exits
+sniffer_thread = threading.Thread(target=start_sniffer, daemon=True)
+sniffer_thread.start()
+
 # Live Monitor Page
 @app.route("/live_monitor")
 def live_monitor():
@@ -180,26 +357,10 @@ def live_monitor():
         return redirect(url_for("login"))
     return render_template("live_monitor.html")
 
-# API for Real-Time Traffic Simulation
 @app.route("/api/live_traffic")
 def live_traffic_api():
-    import random
-    import time
-    
-    protocols = ["TCP", "UDP", "HTTP", "HTTPS", "ICMP", "SSH", "FTP"]
-    
-    # Simulate a packet
-    packet = {
-        "timestamp": time.time(),
-        "src_ip": f"192.168.1.{random.randint(2, 255)}",
-        "dst_ip": f"10.0.0.{random.randint(1, 50)}",
-        "protocol": random.choice(protocols),
-        "length": random.randint(64, 1500),
-        # 10% chance of Attack
-        "prediction": "Attack" if random.random() < 0.1 else "Benign"
-    }
-    
-    return packet
+    """Returns the latest captured packet"""
+    return latest_packet_data
 
 if __name__ == "__main__":
     app.run(debug=True)
