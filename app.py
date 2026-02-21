@@ -215,12 +215,18 @@ def upload(mode):
         if "label" in df.columns:
             try:
                 # Convert predictions to comparable format with labels
-                pred_binary = [0 if p == "normal" else 1 for p in predictions]
-                # Try to convert labels to binary
-                try:
-                    ground_truth = df["label"].map(lambda x: 0 if x == "normal" else 1)
-                except:
-                    ground_truth = df["label"].astype(int)
+                # pred_binary: 0 for normal, 1 for attacks
+                pred_binary = [0 if str(p).strip().lower() == "normal" else 1 for p in predictions]
+                
+                # ground_truth: 0 for normal, 1 for attacks
+                # Handle both string labels ('normal') and numeric labels (0/1)
+                def map_label(x):
+                    s = str(x).strip().lower()
+                    if s in ["normal", "0", "0.0"]:
+                        return 0
+                    return 1
+                
+                ground_truth = df["label"].apply(map_label)
                 
                 acc = accuracy_score(ground_truth, pred_binary)
                 accuracy_msg = f"{acc * 100:.2f}%"
@@ -230,17 +236,17 @@ def upload(mode):
 
         # Add Severity Column for UI (High for Attack, Low for Benign)
         def get_badge(pred):
-            if pred == "Attack":
-                return '<span class="badge badge-danger" style="font-size: 1rem; padding: 8px 12px;">High</span>'
-            return '<span class="badge badge-success" style="font-size: 1rem; padding: 8px 12px; background-color: #00ff88; color: black;">Low</span>'
+            if str(pred).strip().lower() == "normal":
+                return '<span class="badge badge-success" style="font-size: 1rem; padding: 8px 12px; background-color: #00ff88; color: black;">Low</span>'
+            return '<span class="badge badge-danger" style="font-size: 1rem; padding: 8px 12px;">High</span>'
 
-        df["Severity"] = [get_badge(p) for p in df["Prediction"]]
+        df["Severity"] = [get_badge(p) for p in predictions]
 
         # 8. Save result CSV
         result_path = os.path.join(upload_folder, f"result_{mode}.csv")
         # Save a clean copy without HTML
         df_clean = df.copy()
-        df_clean["Severity"] = ["High" if p == "Attack" else "Low" for p in df_clean["Prediction"]]
+        df_clean["Severity"] = ["Low" if str(p).strip().lower() == "normal" else "High" for p in predictions]
         df_clean.to_csv(result_path, index=False)
 
         pd.set_option('display.max_colwidth', None) # Ensure full content visibility
@@ -248,8 +254,19 @@ def upload(mode):
         # 9. Render result page
         # Optimize: Don't render 125k rows in HTML, it crashes browser. Show top 500.
         truncated_msg = ""
-        if len(df) > 500:
-             truncated_msg = f" (Showing first 500 rows of {len(df)}. Download CSV for full results.)"
+        total_rows = len(df)
+        
+        # Calculate full counts for the cards and charts
+        if "Prediction" in df.columns:
+            # We use the 'Prediction' column we just created
+            total_attacks = (df["Prediction"] == "Attack").sum()
+            total_benign = total_rows - total_attacks
+        else:
+            total_attacks = 0
+            total_benign = 0
+
+        if total_rows > 500:
+             truncated_msg = f" (Showing first 500 rows of {total_rows}. Download CSV for full results.)"
              flash(f"Analysis complete! {truncated_msg}", "success")
         
         return render_template(
@@ -257,7 +274,10 @@ def upload(mode):
             # Fix: Limit max_rows to 500 to prevent browser crash
             tables=[df.head(500).to_html(classes="table table-striped", index=False, escape=False)],
             mode=mode,
-            accuracy=accuracy_msg  # Pass accuracy to template
+            accuracy=accuracy_msg,  # Pass accuracy to template
+            total_rows=total_rows,  # Pass real row count
+            total_attacks=total_attacks,
+            total_benign=total_benign
         )
 
     return render_template("upload.html", mode=mode)

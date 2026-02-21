@@ -50,7 +50,7 @@
         <div class="card text-white bg-danger mb-3" style="border: none; border-radius: 8px;">
           <div class="card-header">High Alerts</div>
           <div class="card-body">
-            <h1 class="card-title" id="attackCount"></h1>
+            <h1 class="card-title" id="attackCount">{{ total_attacks }}</h1>
           </div>
         </div>
       </div>
@@ -66,15 +66,15 @@
         <div class="card text-white bg-info mb-3" style="border: none; border-radius: 8px;">
           <div class="card-header">Low Alerts</div>
           <div class="card-body">
-            <h1 class="card-title" id="benignCount"></h1>
+            <h1 class="card-title" id="benignCount">{{ total_benign }}</h1>
           </div>
         </div>
       </div>
       <div class="col-md-3">
         <div class="card text-white bg-secondary mb-3" style="border: none; border-radius: 8px;">
-          <div class="card-header">Total</div>
+          <div class="card-header">Total Entries</div>
           <div class="card-body">
-            <h1 class="card-title">{{ tables[0]|length }}</h1>
+            <h1 class="card-title">{{ total_rows }}</h1>
           </div>
         </div>
       </div>
@@ -188,20 +188,11 @@
   </div>
 
   <script>
-    // Count results from table
-    const rows = document.querySelectorAll("table tbody tr");
-    let attack = 0;
-    let benign = 0;
+    // Use full counts passed from Flask to ensure accurate charts for large datasets
+    const attack = {{ total_attacks }};
+    const benign = {{ total_benign }};
 
-    rows.forEach((row) => {
-      if (row.innerText.includes("Attack")) attack++;
-      else benign++;
-    });
-
-    document.getElementById("attackCount").innerText = attack;
-    document.getElementById("benignCount").innerText = benign;
-
-    // Also update the table under the bar chart
+    // Update the summary labels under charts
     document.getElementById("tableHighCount").innerText = attack;
     document.getElementById("tableLowCount").innerText = benign;
 

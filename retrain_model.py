@@ -1,7 +1,7 @@
 import pandas as pd
 import joblib
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 import os
 
@@ -19,62 +19,99 @@ columns = [
     "dst_host_rerror_rate", "dst_host_srv_rerror_rate", "label"
 ]
 
-# Path to the uploaded dataset (NSL-KDD)
-dataset_path = "uploads/train.csv.csv" # The user's uploaded 125k row file
+# Path to the uploaded dataset
+train_dataset_path = "uploads/train.csv.csv"
+test_dataset_path = "uploads/test.csv.csv"
 
-print(f"🔄 Loading dataset from {dataset_path}...")
+print(f"🔄 Loading full training dataset from {train_dataset_path}...")
 
 try:
-    # 1. Load Data (Headerless)
-    df = pd.read_csv(dataset_path, header=None)
+    # 1. Load Data
+    train_df = pd.read_csv(train_dataset_path, header=None)
     
-    # Check if 42 columns (standard NSL-KDD) or 43 (with difficulty)
-    if df.shape[1] == 42:
-        df.columns = columns
-    elif df.shape[1] == 43:
-        df.columns = columns + ["difficulty"]
+    # Handle column count
+    if train_df.shape[1] == 42:
+        train_df.columns = columns
+    elif train_df.shape[1] == 43:
+        train_df.columns = columns + ["difficulty"]
     else:
-        # Fallback: Just take first 42
-        df = df.iloc[:, :42]
-        df.columns = columns
+        train_df = train_df.iloc[:, :42]
+        train_df.columns = columns
 
-    print(f"✅ Loaded {len(df)} rows. Columns assigned.")
+    print(f"✅ Loaded {len(train_df)} training rows.")
 
-    # 2. Preprocessing
-    # Drop categorical columns to avoid encoding issues in app.py (StandardScaler only handles numeric)
-    # The numeric columns in NSL-KDD are sufficient for high accuracy.
-    drop_cols = ["protocol_type", "service", "flag", "label"]
-    if "difficulty" in df.columns:
-        drop_cols.append("difficulty")
-        
-    X = df.drop(drop_cols, axis=1, errors='ignore')
+    # 2. Encoding Categorical Features
+    print("💎 Encoding categorical features and preparing dataset...")
+    le_dict = {}
+    X = train_df.drop(["label", "difficulty"], axis=1, errors='ignore')
     
-    # Process Label (0 = normal, 1 = attack)
-    y = df["label"].apply(lambda x: 0 if str(x).strip() == "normal" else 1)
+    categorical_cols = ["protocol_type", "service", "flag"]
+    categorical_indices = [X.columns.get_loc(c) for c in categorical_cols if c in X.columns]
+    
+    for col in categorical_cols:
+        le = LabelEncoder()
+        X[col] = le.fit_transform(X[col].astype(str))
+        le_dict[col] = le
+    
+    y = train_df["label"]
 
-    print(f"📊 Training on {X.shape[1]} numeric features...")
-
-    # 3. Scaling
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    # 4. Train/Test Split
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
-
-    # 5. Train Model
-    print("🚀 Training Random Forest (this may take a minute)...")
-    model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+    # 3. Model Training
+    print(f"🚀 Training HistGradientBoosting (300 iterations) on {X.shape[1]} features...")
+    # HistGradientBoosting is generally better than RandomForest for accuracy on this dataset
+    model = HistGradientBoostingClassifier(
+        max_iter=300,
+        learning_rate=0.05,
+        max_leaf_nodes=64,
+        categorical_features=categorical_indices,
+        random_state=42
+    )
+    
+    # Split for internal validation
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.1, random_state=42, stratify=y)
+    
     model.fit(X_train, y_train)
 
-    # 6. Evaluate
-    accuracy = model.score(X_test, y_test)
-    print(f"🏆 Model Accuracy on Test Split: {accuracy * 100:.2f}%")
+    # 4. Accuracy Check
+    val_acc = model.score(X_val, y_val)
+    print(f"🏆 Internal Validation Accuracy: {val_acc * 100:.2f}%")
 
-    # 7. Save
+    # 5. Save Model and Encoders
     os.makedirs("models", exist_ok=True)
     joblib.dump(model, "models/network_model.pkl")
-    joblib.dump(scaler, "models/network_scaler.pkl")
-    print("💾 Model saved to models/network_model.pkl")
+    joblib.dump(le_dict, "models/network_label_encoders.pkl")
+    print("💾 High-performance model saved.")
+
+    # 6. Final Test
+    if os.path.exists(test_dataset_path):
+        print("\n📝 Running Final Exam on test.csv.csv...")
+        test_df = pd.read_csv(test_dataset_path, header=None)
+        if test_df.shape[1] >= 42:
+            test_df = test_df.iloc[:, :len(columns)]
+            test_df.columns = columns
+            X_test = test_df.drop(["label"], axis=1)
+            y_test = test_df["label"]
+            
+            for col, le in le_dict.items():
+                X_test[col] = X_test[col].astype(str).map(
+                    lambda x: le.transform([x])[0] if x in le.classes_ else -1
+                )
+            
+            # Evaluate Binary Accuracy (Normal vs Attack) - This is what the dashboard uses
+            preds = model.predict(X_test)
+            preds_bin = [0 if str(p).strip().lower() == "normal" else 1 for p in preds]
+            y_test_bin = y_test.apply(lambda x: 0 if str(x).strip().lower() == "normal" else 1)
+            
+            from sklearn.metrics import accuracy_score
+            test_acc_bin = accuracy_score(y_test_bin, preds_bin)
+            
+            print(f"🎯 Final Test Accuracy (Multi-class): {model.score(X_test, y_test) * 100:.2f}%")
+            print(f"🛡️ Final Test Accuracy (Binary Detection): {test_acc_bin * 100:.2f}%")
+            
+            if test_acc_bin >= 0.80:
+                print("🌟 SUCCESS: Binary Accuracy target reached (>80%)!")
+
 
 except Exception as e:
     print(f"❌ Error: {e}")
+
+
