@@ -214,19 +214,15 @@ def upload(mode):
         accuracy_msg = None
         if "label" in df.columns:
             try:
-                # Convert predictions to comparable format with labels
-                # pred_binary: 0 for normal, 1 for attacks
-                pred_binary = [0 if str(p).strip().lower() == "normal" else 1 for p in predictions]
-                
-                # ground_truth: 0 for normal, 1 for attacks
-                # Handle both string labels ('normal') and numeric labels (0/1)
-                def map_label(x):
+                # Convert predictions and ground truth to comparable binary format (0: normal, 1: attack)
+                def map_any_label(x):
                     s = str(x).strip().lower()
-                    if s in ["normal", "0", "0.0"]:
+                    if s in ["normal", "0", "0.0", "benign"]:
                         return 0
                     return 1
                 
-                ground_truth = df["label"].apply(map_label)
+                pred_binary = [map_any_label(p) for p in predictions]
+                ground_truth = df["label"].apply(map_any_label)
                 
                 acc = accuracy_score(ground_truth, pred_binary)
                 accuracy_msg = f"{acc * 100:.2f}%"
