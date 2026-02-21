@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+
+<head>
+  <title>IntruGuard | Data Upload</title>
+
+  <!-- Bootstrap -->
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" />
+
+  <!-- Main CSS -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+
+<body class="soc-body">
+  <div class="bg-grid"></div>
+  <div>
+    <div class="container mt-5">
+      <!-- PAGE HEADER -->
+      <div class="text-center mb-4">
+        <h2 class="dashboard-title">
+          {{ "Network Traffic Analysis" if mode == "network" else "Web Intrusion
+          Detection" }}
+        </h2>
+        <p class="dashboard-subtitle">
+          Upload CSV dataset for machine learning–based threat inspection
+        </p>
+      </div>
+
+      <!-- UPLOAD CARD -->
+      <div class="upload-panel mx-auto">
+        <div class="upload-header">
+          <span class="status-dot"></span>
+          DATA INGESTION MODULE
+        </div>
+
+        <div class="upload-body">
+          {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+          {% for category, message in messages %}
+          <div class="alert alert-{{ category }} text-center">{{ message }}</div>
+          {% endfor %}
+          {% endif %}
+          {% endwith %}
+          <form method="POST" enctype="multipart/form-data">
+            <!-- FILE INPUT -->
+            <div class="form-group">
+              <label class="upload-label">Select CSV Dataset</label>
+              <input type="file" name="csv_file" class="form-control-file upload-input" accept=".csv" required />
+            </div>
+
+            <!-- INFO BOX -->
+            <div class="info-box mt-3">
+              <ul>
+                <li>✔ CSV format only</li>
+                <li>✔ Feature order must match trained model</li>
+                <li>✔ File processed locally (secure)</li>
+              </ul>
+            </div>
+
+            <!-- ACTION BUTTON -->
+            <button type="submit" class="btn btn-analyze btn-block mt-4">
+              ▶ Initiate Analysis
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- BACK BUTTON -->
+      <div class="text-center mt-4">
+        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+          ← Back to Dashboard
+        </a>
+      </div>
+    </div>
+</body>
+
+</html>

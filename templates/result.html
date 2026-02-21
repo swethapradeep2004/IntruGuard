@@ -1,0 +1,287 @@
+<!doctype html>
+<html>
+
+<head>
+  <title>Analysis Result - IntruGuard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+
+<body class="soc-body">
+  <div class="bg-grid"></div>
+
+  <!-- SOC TOP BAR -->
+  <div class="soc-topbar">
+    <div class="soc-left">
+      <span class="blink-dot"></span>
+      <strong>INTRUGUARD ANALYZER</strong>
+      <span class="ml-3">| STATUS: <span class="status-live">COMPLETED</span></span>
+    </div>
+    <div class="soc-right">
+      <a href="{{ url_for('dashboard') }}" class="btn btn-sm btn-outline-info">
+        ← DASHBOARD
+      </a>
+    </div>
+  </div>
+
+  <div class="container mt-5" style="position: relative; z-index: 2;">
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    {% for category, message in messages %}
+    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+      {{ message }}
+      <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+        <span aria-hidden="true">&times;</span>
+      </button>
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    <h2 class="text-center dashboard-title mb-4">INTRUSION DETECTION RESULT</h2>
+
+    <!-- SUMMARY CARDS -->
+    <div class="row text-center mb-4">
+      <div class="col-md-3">
+        <div class="card text-white bg-danger mb-3" style="border: none; border-radius: 8px;">
+          <div class="card-header">High Alerts</div>
+          <div class="card-body">
+            <h1 class="card-title" id="attackCount">{{ total_attacks }}</h1>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card text-white bg-warning mb-3" style="border: none; border-radius: 8px;">
+          <div class="card-header text-dark">Medium Alerts</div>
+          <div class="card-body text-dark">
+            <h1 class="card-title">0</h1>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card text-white bg-info mb-3" style="border: none; border-radius: 8px;">
+          <div class="card-header">Low Alerts</div>
+          <div class="card-body">
+            <h1 class="card-title" id="benignCount">{{ total_benign }}</h1>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card text-white bg-secondary mb-3" style="border: none; border-radius: 8px;">
+          <div class="card-header">Total Entries</div>
+          <div class="card-body">
+            <h1 class="card-title">{{ total_rows }}</h1>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ACCURACY CARD (New) -->
+    {% if accuracy %}
+    <div class="row text-center mb-4">
+      <div class="col-md-12">
+        <div class="card text-white bg-primary mb-3"
+          style="border: none; border-radius: 8px; background: linear-gradient(45deg, #007bff, #00d2ff);">
+          <div class="card-header" style="font-weight: bold;">MODEL ACCURACY SCORE</div>
+          <div class="card-body">
+            <h1 class="card-title" style="font-size: 3rem; text-shadow: 0px 2px 4px rgba(0,0,0,0.3);">{{ accuracy }}
+            </h1>
+            <p class="card-text">Calculated against provided ground truth labels.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- CHARTS PANEL -->
+    <div class="soc-panel mb-4">
+      <div class="row">
+        <div class="col-md-6">
+          <canvas id="pieChart"></canvas>
+        </div>
+        <div class="col-md-6">
+          <canvas id="barChart"></canvas>
+          <div class="mt-3">
+            <table class="table table-sm text-center text-light" style="background: transparent; font-size: 0.9rem;">
+              <thead>
+                <tr style="border-bottom: 1px solid #333;">
+                  <th>Level</th>
+                  <th>Count</th>
+                  <th>Probable Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="badge badge-danger">High</span></td>
+                  <td id="tableHighCount">0</td>
+                  <td class="text-white-50">Attack signature detected</td>
+                </tr>
+                <tr>
+                  <td><span class="badge badge-warning text-dark">Medium</span></td>
+                  <td>0</td>
+                  <td class="text-white-50">Suspicious anomaly (Rule check)</td>
+                </tr>
+                <tr>
+                  <td><span class="badge badge-success text-dark" style="background-color: #00ff88;">Low</span></td>
+                  <td id="tableLowCount">0</td>
+                  <td class="text-white-50">Benign traffic pattern</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RESULT TABLE -->
+    <div class="soc-panel">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="dashboard-title mb-0">Logs</h4>
+        <span class="badge badge-light">Last updated: Just now</span>
+      </div>
+      <div class="table-responsive text-light" style="max-height: 600px; overflow-y: auto;">
+        <style>
+          /* Dark Table Styling */
+          .table,
+          .dataframe {
+            background-color: transparent !important;
+            color: #ffffff !important;
+            width: 100%;
+          }
+
+          .table thead th,
+          .dataframe thead th {
+            background-color: #020617 !important;
+            color: #00e6ff !important;
+            border-bottom: 2px solid #00e6ff !important;
+            border-top: none;
+            text-align: center !important;
+            padding: 12px !important;
+          }
+
+          .table td,
+          .dataframe td {
+            border-top: 1px solid #1e293b !important;
+            border-color: #1e293b !important;
+            padding: 12px !important;
+            vertical-align: middle;
+            color: #ffffff !important;
+          }
+
+          .table-striped tbody tr:nth-of-type(odd) {
+            background-color: rgba(30, 41, 59, 0.5) !important;
+          }
+
+          /* Hover effect */
+          .table-hover tbody tr:hover {
+            background-color: rgba(0, 230, 255, 0.1) !important;
+          }
+        </style>
+        {{ tables[0] | safe }}
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // Use full counts passed from Flask to ensure accurate charts for large datasets
+    const attack = {{ total_attacks }};
+    const benign = {{ total_benign }};
+
+    // Update the summary labels under charts
+    document.getElementById("tableHighCount").innerText = attack;
+    document.getElementById("tableLowCount").innerText = benign;
+
+    // Setup Canvas Contexts for Gradients
+    const ctxPie = document.getElementById("pieChart").getContext("2d");
+    const ctxBar = document.getElementById("barChart").getContext("2d");
+
+    // Create Gradients (Top to Bottom)
+    // Red Gradient
+    const gradientRed = ctxPie.createLinearGradient(0, 0, 0, 400);
+    gradientRed.addColorStop(0, '#ff4c4c');
+    gradientRed.addColorStop(1, '#8b0000'); // Dark Deep Red
+
+    // Green Gradient
+    const gradientGreen = ctxPie.createLinearGradient(0, 0, 0, 400);
+    gradientGreen.addColorStop(0, '#00ff88');
+    gradientGreen.addColorStop(1, '#00552b'); // Dark Deep Green
+
+    // Yellow Gradient (for Medium)
+    const gradientYellow = ctxBar.createLinearGradient(0, 0, 0, 400);
+    gradientYellow.addColorStop(0, '#ffc107');
+    gradientYellow.addColorStop(1, '#856404');
+
+    // Common Chart Options for Dark Theme
+    const chartOptions = {
+      plugins: {
+        legend: { labels: { color: '#c9d1d9' } }
+      },
+      scales: {
+        x: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
+        y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
+      }
+    };
+
+    // Pie Chart
+    new Chart(ctxPie, {
+      type: "pie",
+      data: {
+        labels: ["Attack", "Benign"],
+        datasets: [
+          {
+            data: [attack, benign],
+            backgroundColor: [gradientRed, gradientGreen],
+            borderColor: "#020617",
+            borderWidth: 2
+          },
+        ],
+      },
+      options: {
+        plugins: { legend: { labels: { color: '#c9d1d9' } } }
+      }
+    });
+
+    // Bar Chart (Severity Levels)
+    new Chart(ctxBar, {
+      type: "bar",
+      data: {
+        labels: ["High Alert", "Medium Alert", "Low Alert"],
+        datasets: [
+          {
+            label: "Count",
+            data: [attack, 0, benign],
+            backgroundColor: [gradientRed, gradientYellow, gradientGreen],
+          },
+        ],
+      },
+      options: {
+        plugins: {
+          legend: {
+            labels: {
+              color: '#c9d1d9',
+              generateLabels: function (chart) {
+                const original = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+                original.forEach(label => {
+                  label.fillStyle = '#6c757d'; // Grey color for the legend box
+                  label.strokeStyle = '#6c757d';
+                });
+                return original;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
+          y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
+        }
+      }
+    });
+  </script>
+</body>
+
+</html>

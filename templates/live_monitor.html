@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+
+<head>
+    <title>Live Monitor - IntruGuard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+    <style>
+        .terminal-log {
+            background-color: rgba(0, 0, 0, 0.8);
+            border: 1px solid #333;
+            height: 60vh;
+            overflow-y: auto;
+            font-family: 'Courier New', Courier, monospace;
+            padding: 15px;
+            color: #00ff88;
+            box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            border-bottom: 1px solid #111;
+            padding: 2px 0;
+        }
+
+        .log-attack {
+            color: #ff4c4c;
+            font-weight: bold;
+            background: rgba(255, 76, 76, 0.1);
+        }
+
+        .log-benign {
+            color: #fff;
+        }
+
+        .blink-status {
+            animation: blinker 1.5s linear infinite;
+        }
+
+        @keyframes blinker {
+            50% {
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+
+<body class="soc-body">
+    <div class="bg-grid"></div>
+
+    <!-- SOC TOP BAR -->
+    <div class="soc-topbar">
+        <div class="soc-left">
+            <span class="blink-dot"></span>
+            <strong>INTRUGUARD LIVE MONITOR</strong>
+            <span class="ml-3">| STATUS: <span class="status-live blink-status">ACTIVE SCANNING</span></span>
+        </div>
+        <div class="soc-right">
+            <a href="{{ url_for('dashboard') }}" class="btn btn-sm btn-danger">STOP MONITORING</a>
+        </div>
+    </div>
+
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <!-- LEFT PANEL: STATS -->
+            <div class="col-md-3">
+                <div class="soc-panel mb-3 text-center">
+                    <h5 class="text-white-50">Packets Scanned</h5>
+                    <h2 class="text-info" id="scannedCount">0</h2>
+                </div>
+                <div class="soc-panel mb-3 text-center" style="border-color: #ff4c4c;">
+                    <h5 class="text-danger">Threats Detected</h5>
+                    <h2 class="text-danger blink-status" id="threatCount">0</h2>
+                </div>
+                <div class="soc-panel text-center">
+                    <h6 class="text-white-50">Last Detected IP</h6>
+                    <h4 class="text-warning" id="lastIp">--</h4>
+                </div>
+            </div>
+
+            <!-- RIGHT PANEL: LIVE LOGS -->
+            <div class="col-md-9">
+                <div class="soc-panel">
+                    <h5 class="dashboard-title">Real-Time Traffic Log</h5>
+                    <div class="terminal-log" id="logWindow">
+                        <!-- Logs will appear here -->
+                        <div class="text-muted">> Initializing packet sniffer...</div>
+                        <div class="text-muted">> Channel listening on eth0...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let scanned = 0;
+        let threats = 0;
+        const logWindow = document.getElementById("logWindow");
+
+        function addLog(data) {
+            const div = document.createElement("div");
+            div.className = "log-entry " + (data.prediction === "Attack" ? "log-attack" : "log-benign");
+
+            const time = new Date().toLocaleTimeString();
+            const icon = data.prediction === "Attack" ? "[!]" : "[i]";
+
+            div.innerHTML = `<span class="text-muted">[${time}]</span> 
+                             <span class="text-info">${data.protocol}</span> 
+                             ${data.src_ip} -> ${data.dst_ip} 
+                             <span class="float-right">${icon} - ${data.prediction}</span>`;
+
+            logWindow.appendChild(div);
+            logWindow.scrollTop = logWindow.scrollHeight;
+
+            // Update Stats
+            scanned++;
+            document.getElementById("scannedCount").innerText = scanned;
+
+            if (data.prediction === "Attack") {
+                threats++;
+                document.getElementById("threatCount").innerText = threats;
+                document.getElementById("lastIp").innerText = data.src_ip;
+            }
+        }
+
+        function fetchTraffic() {
+            fetch('/api/live_traffic')
+                .then(response => response.json())
+                .then(data => {
+                    addLog(data);
+                })
+                .catch(err => console.error(err));
+        }
+
+        // Simulate varying traffic speed
+        setInterval(fetchTraffic, 1500); 
+    </script>
+</body>
+
+</html>
