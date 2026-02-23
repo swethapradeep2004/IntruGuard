@@ -27,7 +27,7 @@ print(f"✓ Class distribution: {y_net.value_counts().to_dict()}")
 # Encode string columns
 le_dict_net = {}
 for col in X_net.columns:
-    if X_net[col].dtype == 'object':
+    if X_net[col].dtype == 'object' or not pd.api.types.is_numeric_dtype(X_net[col]):
         le = LabelEncoder()
         X_net[col] = le.fit_transform(X_net[col])
         le_dict_net[col] = le
@@ -85,7 +85,7 @@ print(f"✓ Class distribution: {y_web.value_counts().to_dict()}")
 # Encode string columns
 le_dict_web = {}
 for col in X_web.columns:
-    if X_web[col].dtype == 'object':
+    if X_web[col].dtype == 'object' or not pd.api.types.is_numeric_dtype(X_web[col]):
         le = LabelEncoder()
         X_web[col] = le.fit_transform(X_web[col])
         le_dict_web[col] = le
