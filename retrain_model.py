@@ -23,7 +23,7 @@ columns = [
 train_dataset_path = "uploads/train.csv.csv"
 test_dataset_path = "uploads/test.csv.csv"
 
-print(f"🔄 Loading full training dataset from {train_dataset_path}...")
+print(f"LOADING: Loading full training dataset from {train_dataset_path}...")
 
 try:
     # 1. Load Data
@@ -38,15 +38,18 @@ try:
         train_df = train_df.iloc[:, :42]
         train_df.columns = columns
 
-    print(f"✅ Loaded {len(train_df)} training rows.")
+    print(f"DONE: Loaded {len(train_df)} training rows.")
 
-    # 2. Encoding Categorical Features
-    print("💎 Encoding categorical features and preparing dataset...")
+    # 2. Encoding and Binary Label Mapping
+    print("INFO: Encoding categorical features and preparing binary classification...")
+    
+    # Map labels to binary: 0 for normal, 1 for everything else (attack)
+    train_df["label"] = train_df["label"].apply(lambda x: 0 if str(x).strip().lower() == "normal" else 1)
+    
     le_dict = {}
     X = train_df.drop(["label", "difficulty"], axis=1, errors='ignore')
     
     categorical_cols = ["protocol_type", "service", "flag"]
-    categorical_indices = [X.columns.get_loc(c) for c in categorical_cols if c in X.columns]
     
     for col in categorical_cols:
         le = LabelEncoder()
@@ -56,14 +59,16 @@ try:
     y = train_df["label"]
 
     # 3. Model Training
-    print(f"🚀 Training HistGradientBoosting (300 iterations) on {X.shape[1]} features...")
-    # HistGradientBoosting is generally better than RandomForest for accuracy on this dataset
-    model = HistGradientBoostingClassifier(
-        max_iter=300,
-        learning_rate=0.05,
-        max_leaf_nodes=64,
-        categorical_features=categorical_indices,
-        random_state=42
+    from sklearn.ensemble import RandomForestClassifier
+    print(f"START: Training RandomForestClassifier on {X.shape[1]} features...")
+    
+    # RandomForest is very robust for this dataset
+    model = RandomForestClassifier(
+        n_estimators=100,
+        max_depth=20,
+        class_weight='balanced',
+        random_state=42,
+        n_jobs=-1
     )
     
     # Split for internal validation
@@ -73,17 +78,17 @@ try:
 
     # 4. Accuracy Check
     val_acc = model.score(X_val, y_val)
-    print(f"🏆 Internal Validation Accuracy: {val_acc * 100:.2f}%")
+    print(f"RESULT: Internal Validation Accuracy (Binary): {val_acc * 100:.2f}%")
 
     # 5. Save Model and Encoders
     os.makedirs("models", exist_ok=True)
     joblib.dump(model, "models/network_model.pkl")
     joblib.dump(le_dict, "models/network_label_encoders.pkl")
-    print("💾 High-performance model saved.")
+    print("SAVED: Improved binary model saved.")
 
     # 6. Final Test
     if os.path.exists(test_dataset_path):
-        print("\n📝 Running Final Exam on test.csv.csv...")
+        print("\nTEST: Running Final Exam on test.csv.csv...")
         test_df = pd.read_csv(test_dataset_path, header=None)
         if test_df.shape[1] >= 42:
             test_df = test_df.iloc[:, :len(columns)]
@@ -96,22 +101,22 @@ try:
                     lambda x: le.transform([x])[0] if x in le.classes_ else -1
                 )
             
-            # Evaluate Binary Accuracy (Normal vs Attack) - This is what the dashboard uses
-            preds = model.predict(X_test)
-            preds_bin = [0 if str(p).strip().lower() == "normal" else 1 for p in preds]
+            # Evaluate Binary Accuracy (Normal vs Attack)
+            preds_bin = model.predict(X_test)
             y_test_bin = y_test.apply(lambda x: 0 if str(x).strip().lower() == "normal" else 1)
             
-            from sklearn.metrics import accuracy_score
+            from sklearn.metrics import accuracy_score, classification_report
             test_acc_bin = accuracy_score(y_test_bin, preds_bin)
             
-            print(f"🎯 Final Test Accuracy (Multi-class): {model.score(X_test, y_test) * 100:.2f}%")
-            print(f"🛡️ Final Test Accuracy (Binary Detection): {test_acc_bin * 100:.2f}%")
+            print(f"TARGET: Final Test Accuracy (Binary Detection): {test_acc_bin * 100:.2f}%")
+            print("\nREPORT: Detailed Classification Report:")
+            print(classification_report(y_test_bin, preds_bin, target_names=["Normal", "Attack"]))
             
             if test_acc_bin >= 0.80:
-                print("🌟 SUCCESS: Binary Accuracy target reached (>80%)!")
+                print("SUCCESS: Binary Accuracy target reached (>80%)!")
 
 
 except Exception as e:
-    print(f"❌ Error: {e}")
+    print(f"ERROR: {e}")
 
 

@@ -187,7 +187,12 @@ def upload(mode):
             # Encode string columns using the same encoders used during training
             for col in all_features:
                 if col in le_dict:
-                    df_to_process[col] = le_dict[col].transform(df_to_process[col])
+                    le = le_dict[col]
+                    # Robust transform: map unknown labels to -1 instead of crashing (previously unseen labels error)
+                    # This ensures the application stays resilient to new/unseen categorical data
+                    df_to_process[col] = df_to_process[col].astype(str).map(
+                        lambda x: le.transform([x])[0] if x in le.classes_ else -1
+                    )
             
             df_to_predict = df_to_process
         except Exception as e:
@@ -209,7 +214,14 @@ def upload(mode):
             return redirect(url_for("dashboard"))
 
         # 7. Convert results
-        df["Prediction"] = ["Attack" if p != "normal" else "Benign" for p in predictions]
+        # Robust mapping: 0, "0", "normal", "benign" -> Benign. Everything else -> Attack.
+        def identify_attack(p):
+            s = str(p).strip().lower()
+            if s in ["normal", "0", "0.0", "benign"]:
+                return "Benign"
+            return "Attack"
+            
+        df["Prediction"] = [identify_attack(p) for p in predictions]
         
         # --- ACCURACY CALCULATION ---
         accuracy_msg = None
@@ -227,13 +239,16 @@ def upload(mode):
                 
                 acc = accuracy_score(ground_truth, pred_binary)
                 accuracy_msg = f"{acc * 100:.2f}%"
+                print(f"DEBUG: Accuracy calculated for {mode} upload: {accuracy_msg}")
+                print(f"DEBUG: Ground Truth Attacks: {sum(ground_truth)}, Predicted Attacks: {sum(pred_binary)}")
             except Exception as e:
-                print(f"Accuracy calc failed: {e}")
+                print(f"DEBUG: Accuracy calc failed: {e}")
         # ----------------------------
 
         # Add Severity Column for UI (High for Attack, Low for Benign)
         def get_badge(pred):
-            if str(pred).strip().lower() == "normal":
+            s = str(pred).strip().lower()
+            if s in ["normal", "0", "0.0", "benign"]:
                 return '<span class="badge badge-success" style="font-size: 1rem; padding: 8px 12px; background-color: #00ff88; color: black;">Low</span>'
             return '<span class="badge badge-danger" style="font-size: 1rem; padding: 8px 12px;">High</span>'
 
@@ -243,7 +258,7 @@ def upload(mode):
         result_path = os.path.join(upload_folder, f"result_{mode}.csv")
         # Save a clean copy without HTML
         df_clean = df.copy()
-        df_clean["Severity"] = ["Low" if str(p).strip().lower() == "normal" else "High" for p in predictions]
+        df_clean["Severity"] = ["Low" if str(p).strip().lower() in ["normal", "0", "0.0", "benign"] else "High" for p in predictions]
         df_clean.to_csv(result_path, index=False)
 
         pd.set_option('display.max_colwidth', None) # Ensure full content visibility
