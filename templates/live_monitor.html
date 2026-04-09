@@ -55,7 +55,14 @@
             <strong>INTRUGUARD LIVE MONITOR</strong>
             <span class="ml-3">| STATUS: <span class="status-live blink-status">ACTIVE SCANNING</span></span>
         </div>
-        <div class="soc-right">
+        <div class="soc-right d-flex align-items-center">
+            <div class="mr-3 text-white d-flex align-items-center">
+                <div class="custom-control custom-switch">
+                    <input type="checkbox" class="custom-control-input" id="audioToggle">
+                    <label class="custom-control-label" style="cursor: pointer;" for="audioToggle">🔊 Audio Sonification</label>
+                </div>
+            </div>
+            <input type="range" class="custom-range mr-4" id="volumeSlider" min="0" max="1" step="0.05" value="0.2" style="width: 100px;">
             <a href="{{ url_for('dashboard') }}" class="btn btn-sm btn-danger">STOP MONITORING</a>
         </div>
     </div>
@@ -75,6 +82,12 @@
                 <div class="soc-panel text-center">
                     <h6 class="text-white-50">Last Detected IP</h6>
                     <h4 class="text-warning" id="lastIp">--</h4>
+                </div>
+                
+                <!-- ACTIVE COUNTERMEASURES MATRIX -->
+                <div class="soc-panel mt-3 text-center" id="mtdPanel" style="border-color: #333; transition: all 0.3s;">
+                    <h6 class="text-white-50">Active Countermeasures</h6>
+                    <div id="mtdStatus" class="badge badge-secondary p-2 mt-2 w-100">STANDBY</div>
                 </div>
             </div>
 
@@ -97,7 +110,81 @@
         let threats = 0;
         const logWindow = document.getElementById("logWindow");
 
+        // --- AUDIO SONIFICATION ENGINE ---
+        let audioCtx = null;
+        let mainGainNode = null;
+        let audioEnabled = false;
+
+        document.getElementById('audioToggle').addEventListener('change', function(e) {
+            audioEnabled = e.target.checked;
+            if (audioEnabled && !audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+                mainGainNode = audioCtx.createGain();
+                mainGainNode.gain.value = document.getElementById('volumeSlider').value;
+                mainGainNode.connect(audioCtx.destination);
+            }
+            if (audioEnabled && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        });
+
+        document.getElementById('volumeSlider').addEventListener('input', function(e) {
+            if (mainGainNode && audioCtx) {
+                mainGainNode.gain.setValueAtTime(e.target.value, audioCtx.currentTime);
+            }
+        });
+
+        function playTrafficSound(prediction, length) {
+            if (!audioEnabled || !audioCtx) return;
+
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            osc.connect(gainNode);
+            gainNode.connect(mainGainNode);
+
+            const now = audioCtx.currentTime;
+
+            if (prediction === "Attack") {
+                // Threat: Harsh, dissonant chirp
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(800, now);
+                osc.frequency.exponentialRampToValueAtTime(300, now + 0.3);
+                
+                gainNode.gain.setValueAtTime(0, now);
+                gainNode.gain.linearRampToValueAtTime(0.8, now + 0.05);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+
+                const osc2 = audioCtx.createOscillator();
+                osc2.type = 'square';
+                osc2.frequency.setValueAtTime(850, now);
+                osc2.connect(gainNode);
+                
+                osc.start(now);
+                osc2.start(now);
+                osc.stop(now + 0.3);
+                osc2.stop(now + 0.3);
+            } else {
+                // Benign: Soft radar blip
+                osc.type = 'sine';
+                
+                // Modulate frequency slightly based on packet length
+                const freq = 200 + (Math.min(length, 1500) / 1500) * 200;
+                osc.frequency.setValueAtTime(freq, now);
+                
+                gainNode.gain.setValueAtTime(0, now);
+                gainNode.gain.linearRampToValueAtTime(0.3, now + 0.02);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+
+                osc.start(now);
+                osc.stop(now + 0.15);
+            }
+        }
+        // ---------------------------------
+
         function addLog(data) {
+            playTrafficSound(data.prediction, data.length);
             const div = document.createElement("div");
             div.className = "log-entry " + (data.prediction === "Attack" ? "log-attack" : "log-benign");
 
@@ -120,7 +207,57 @@
                 threats++;
                 document.getElementById("threatCount").innerText = threats;
                 document.getElementById("lastIp").innerText = data.src_ip;
+                triggerMTDSequence();
             }
+        }
+
+        // --- MOVING TARGET DEFENSE SIMULATOR ---
+        let mtdActive = false;
+        function triggerMTDSequence() {
+            if (mtdActive) return; // Prevent overlapping triggers
+            mtdActive = true;
+            
+            const mtdPanel = document.getElementById("mtdPanel");
+            const mtdStatus = document.getElementById("mtdStatus");
+            
+            // Visual alarm
+            mtdPanel.style.borderColor = "#ff4c4c";
+            mtdPanel.style.boxShadow = "0 0 15px rgba(255, 76, 76, 0.5)";
+            mtdStatus.className = "badge badge-danger p-2 mt-2 w-100 blink-status";
+            mtdStatus.innerText = "DEFENSE ENGAGED";
+
+            // Inject simulated MTD logs into the main window
+            const logs = [
+                "[MTD] High Severity Threat Detected. Executing Moving Target Defense...",
+                "[MTD] Rotating internal service ports (8080 -> " + (Math.floor(Math.random()*(65535-1024))+1024) + ")...",
+                "[MTD] Cryptographic session keys scrambled. Intruders invalidated.",
+                "[MTD] API endpoint namespaces obfuscated.",
+                "[MTD] Topology shift successfully executed. Defense normalized."
+            ];
+
+            let delay = 0;
+            logs.forEach((msg, idx) => {
+                setTimeout(() => {
+                    const div = document.createElement("div");
+                    div.style.color = "#ffb84d";
+                    div.style.fontWeight = "bold";
+                    div.innerHTML = `<span class="text-muted">[${new Date().toLocaleTimeString()}]</span> ${msg}`;
+                    logWindow.appendChild(div);
+                    logWindow.scrollTop = logWindow.scrollHeight;
+                    
+                    if (idx === logs.length - 1) {
+                        // Reset panel
+                        setTimeout(() => {
+                            mtdPanel.style.borderColor = "#333";
+                            mtdPanel.style.boxShadow = "none";
+                            mtdStatus.className = "badge badge-success p-2 mt-2 w-100";
+                            mtdStatus.innerText = "TOPOLOGY SHIFTED";
+                            mtdActive = false;
+                        }, 2000);
+                    }
+                }, delay);
+                delay += 800; // Staggered log output
+            });
         }
 
         function fetchTraffic() {

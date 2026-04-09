@@ -44,21 +44,21 @@
           <form method="POST" enctype="multipart/form-data">
             <!-- FILE INPUT -->
             <div class="form-group">
-              <label class="upload-label">Select CSV Dataset</label>
-              <input type="file" name="csv_file" class="form-control-file upload-input" accept=".csv" required />
+              <label class="upload-label">Select CSV or PCAP Capture</label>
+              <input type="file" name="csv_file" class="form-control-file upload-input" accept=".csv,.pcap,.pcapng" required />
             </div>
 
             <!-- INFO BOX -->
             <div class="info-box mt-3">
               <ul>
-                <li>✔ CSV format only</li>
-                <li>✔ Feature order must match trained model</li>
+                <li>✔ CSV format supported</li>
+                <li>✔ Automatically parses raw .pcap captures</li>
                 <li>✔ File processed locally (secure)</li>
               </ul>
             </div>
 
             <!-- ACTION BUTTON -->
-            <button type="submit" class="btn btn-analyze btn-block mt-4">
+            <button type="submit" class="btn btn-analyze btn-block mt-4" onclick="this.innerHTML='⏳ Processing... Please Wait'; this.style.opacity='0.7';">
               ▶ Initiate Analysis
             </button>
           </form>

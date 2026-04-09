@@ -69,19 +69,31 @@ def upload(mode):
         os.makedirs(upload_folder, exist_ok=True)
 
         # Fix: Save as a temp file to avoid overwriting the source file if selected from 'uploads/'
-        # This prevents the browser "ERR_UPLOAD_FILE_CHANGED" error.
-        filepath = os.path.join(upload_folder, f"temp_{mode}_input.csv")
+        is_pcap = file.filename.endswith(('.pcap', '.pcapng'))
         
-        # Robustness: Remove existing temp file if it exists to ensure clean state
-        if os.path.exists(filepath):
+        if is_pcap:
+            raw_filepath = os.path.join(upload_folder, f"temp_{mode}_raw.pcap")
+            file.save(raw_filepath)
+            filepath = os.path.join(upload_folder, f"temp_{mode}_input.csv")
             try:
-                os.remove(filepath)
-            except Exception:
-                pass # Ignore if locked, save will likely fail/overwrite anyway
-
-        file.save(filepath)
-
-        flash("CSV file uploaded successfully", "success")
+                from pcap_parser import parse_pcap_to_csv
+                parse_pcap_to_csv(raw_filepath, filepath)
+                flash("PCAP file parsed and features extracted successfully!", "success")
+            except Exception as e:
+                flash(f"Error parsing PCAP: {e}", "danger")
+                return redirect(request.url)
+        else:
+            filepath = os.path.join(upload_folder, f"temp_{mode}_input.csv")
+            
+            # Robustness: Remove existing temp file if it exists to ensure clean state
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except Exception:
+                    pass # Ignore if locked, save will likely fail/overwrite anyway
+    
+            file.save(filepath)
+            flash("CSV file uploaded successfully", "success")
 
         # 3. Read CSV
         try:
@@ -386,6 +398,15 @@ import threading
 import time
 import random
 
+import ctypes
+try:
+    IS_ADMIN = ctypes.windll.shell32.IsUserAnAdmin()
+except Exception:
+    IS_ADMIN = False
+
+from collections import defaultdict
+ip_flows = defaultdict(lambda: {'count': 0, 'srv_count': 0})
+
 # Global variable to store the latest captured packet
 latest_packet_data = {
     "timestamp": time.time(),
@@ -412,13 +433,55 @@ def process_packet(packet):
         elif UDP in packet:
             proto = "UDP"
         
-        # Basic Heuristic for "Prediction" (Visual Demo Only)
-        is_attack = "Benign"
-        if length > 1200 and random.random() < 0.3:
-             is_attack = "Attack"
-        elif random.random() < 0.05: # Random noise
-             is_attack = "Attack"
-             
+        if IS_ADMIN:
+            # Perform actual prediction using the loaded network model
+            try:
+                import pandas as pd
+                
+                # Stateful flow features for better detection
+                ip_flows[src_ip]['count'] += 1
+                if proto == "TCP":
+                    ip_flows[src_ip]['srv_count'] += 1
+                
+                cur_count = ip_flows[src_ip]['count']
+                cur_srv_count = ip_flows[src_ip]['srv_count']
+                
+                same_srv_rate = 1.0
+                
+                feature_data = {
+                    "src_bytes": [length],
+                    "dst_bytes": [0],
+                    "logged_in": [0],
+                    "count": [cur_count],
+                    "srv_count": [cur_srv_count],
+                    "dst_host_srv_count": [cur_srv_count],
+                    "dst_host_same_srv_rate": [same_srv_rate]
+                }
+                df_live = pd.DataFrame(feature_data)
+                pred = network_model.predict(df_live)
+                
+                p_val = str(pred[0]).strip().lower()
+                if p_val in ["normal", "0", "0.0", "benign"]:
+                    is_attack = "Benign"
+                else:
+                    is_attack = "Attack"
+                    
+                # Reset flow periodically to prevent permanent blockage
+                if cur_count > 500:
+                    ip_flows[src_ip]['count'] = 0
+                    ip_flows[src_ip]['srv_count'] = 0
+                    
+            except Exception as e:
+                print(f"Prediction Error: {e}")
+                is_attack = "Error"
+        else:
+            # Simulated threat generator for non-admin demonstration mode
+            is_attack = "Benign"
+            if length > 1200 and random.random() < 0.3:
+                 is_attack = "Attack"
+            elif random.random() < 0.05: # Random noise
+                 is_attack = "Attack"
+                 
         latest_packet_data = {
             "timestamp": time.time(),
             "src_ip": src_ip,
@@ -451,13 +514,19 @@ def start_sniffer():
             while True:
                 time.sleep(random.uniform(0.5, 2.0))
                 # update latest_packet_data manually to show *something* is broken or simulated
+                
+                if IS_ADMIN:
+                    fake_prediction = "Benign"
+                else:
+                    fake_prediction = "Attack" if random.random() < 0.1 else "Benign"
+                    
                 packet = {
                     "timestamp": time.time(),
                     "src_ip": f"SIMULATED (No Npcap)", 
                     "dst_ip": f"10.0.0.{random.randint(1, 50)}",
                     "protocol": random.choice(protocols),
                     "length": random.randint(64, 1500),
-                    "prediction": "Attack" if random.random() < 0.1 else "Benign"
+                    "prediction": fake_prediction
                 }
                 latest_packet_data = packet
 

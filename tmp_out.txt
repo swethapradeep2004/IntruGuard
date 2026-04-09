@@ -1,0 +1,3 @@
+Label encoders keys: dict_keys([])
+Model feature names: ['src_bytes' 'dst_bytes' 'logged_in' 'count' 'srv_count'
+ 'dst_host_srv_count' 'dst_host_same_srv_rate']

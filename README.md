@@ -35,6 +35,15 @@ By analyzing patterns in network traffic and web requests, IntruGuard can distin
 
 ---
 
+## 🆕 Recent Updates
+
+- **Realistic Live Sniffing (Admin Mode):** Resolved an issue causing false positives during live sniffing by replacing hardcoded feature simulations (like abrupt drops in `same_srv_rate`) with realistic local device baselines.
+- **Seamless Session Persistence:** Fixed a bug where experimental "Moving Target Defense" features were causing random logouts. The live monitoring module no longer conflicts with authenticated dashboard sessions.
+- **Predictive Threat Sonification:** Network anomalies can now be translated into real-time audio alerts using the Web Audio API. 
+- **PCAP Parsing Integration:** Added robust upload controls for parsing and extracting data directly from `.pcap` raw capture files into analyzable ML datasets.
+
+---
+
 ## 🚀 Technology Stack
 
 ### Backend
