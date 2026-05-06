@@ -14,49 +14,63 @@ By analyzing patterns in network traffic and web requests, IntruGuard can distin
 
 ## ✨ Key Features
 
-### 1. Dual-Mode Intrusion Detection
-- **Network Analysis:** Specialized detection for network-layer threats using features based on the NSL-KDD dataset (e.g., duration, protocol, service, byte counts).
-- **Web Analysis:** Tailored for web application security, analyzing HTTP methods, URL lengths, payload entropy, and malicious signatures.
-
-### 2. Live Traffic Monitoring
-- **Real-Time Capture:** Uses `Scapy` to sniff live network packets directly from the interface.
-- **Instant Classification:** Every captured packet is scrutinized and classified as "Benign" or "Attack" in real-time.
-- **Visual Feedback:** A live-scrolling monitor that highlights suspicious activity as it happens.
-
-### 3. Professional SOC Dashboard
-- **Interactive Visualizations:** High-level metrics visualized through dynamic Pie charts (Attack vs. Benign) and Bar charts (Severity Levels).
-- **Metric Cards:** At-a-glance view of total packets, attack counts, and system health.
-- **Detailed Logs:** Comprehensive table views with severity badges and detailed packet information.
-
-### 4. Advanced ML Pipeline
-- **Auto-Detection:** The system intelligently identifies the type of dataset uploaded (Network vs. Web) and adjusts its analysis logic accordingly.
-- **Accuracy Benchmarking:** If ground-truth labels are provided, IntruGuard automatically calculates and displays the model's accuracy.
-- **Scalability:** Optimized to handle large datasets (tested with 100k+ rows) using pagination and efficient processing.
+1. **Dual-Mode Intrusion Detection:**
+   - **Network Analysis:** Specialized detection for network-layer threats using features based on the NSL-KDD dataset (e.g., duration, protocol, service, byte counts).
+   - **Web Analysis:** Tailored for web application security, analyzing flow durations, packet lengths, and other metrics based on CIC-IDS datasets.
+2. **Batch Analysis & PCAP Parsing:** Upload CSV datasets or raw `.pcap` capture files. The system automatically parses raw captures into ML-compatible features.
+3. **Live Traffic Monitoring (Admin Mode):** Uses `scapy` to sniff live network packets directly from the local interface and classify them as Benign or Attack in real time, implementing stateful packet flow tracking.
+4. **Predictive Threat Sonification:** Translates network traffic anomalies into generative audio using the Web Audio API (experimental).
+5. **Simulated Demonstration Mode:** If run without administrative privileges, gracefully falls back to a simulated threat generation mode for safe demonstrations.
+6. **Feature Shift Evaluation:** Core models are designed to handle feature shifts and dataset variations, demonstrating model robustness.
 
 ---
 
-## 🆕 Recent Updates
+## 📂 Project Architecture & File Structure
 
-- **Realistic Live Sniffing (Admin Mode):** Resolved an issue causing false positives during live sniffing by replacing hardcoded feature simulations (like abrupt drops in `same_srv_rate`) with realistic local device baselines.
-- **Seamless Session Persistence:** Fixed a bug where experimental "Moving Target Defense" features were causing random logouts. The live monitoring module no longer conflicts with authenticated dashboard sessions.
-- **Predictive Threat Sonification:** Network anomalies can now be translated into real-time audio alerts using the Web Audio API. 
-- **PCAP Parsing Integration:** Added robust upload controls for parsing and extracting data directly from `.pcap` raw capture files into analyzable ML datasets.
+This section outlines the purpose of every major component and file in the project.
+
+### Core Application
+- **`app.py`**: The heart of the application. It acts as the Flask web server, defining routes (`/`, `/dashboard`, `/upload`, `/live_monitor`). It integrates the trained Machine Learning models (via `joblib`) to predict attacks on uploaded files. It also runs a background thread utilizing `scapy` for real-time live network packet capture and classification.
+- **`pcap_parser.py`**: A robust feature extraction script. It reads uploaded `.pcap` or `.pcapng` files and performs stateful tracking of IPs, Ports, and Protocols to construct 7 critical network features (e.g., `src_bytes`, `dst_bytes`, `logged_in`, `count`, `srv_count`, `dst_host_srv_count`, `dst_host_same_srv_rate`). This allows the system to analyze raw dumps natively.
+
+### Machine Learning Pipeline
+- **`retrain_model.py`**: The model training script. It utilizes `scikit-learn`'s `RandomForestClassifier` to train dual models (`network_model.pkl` and `web_model.pkl`). It demonstrates the concept of "Feature Shift" by training on Set A features and testing against Set B features to ensure the model remains robust across differing feature distributions.
+- **`regenerate_demo_datasets.py`**: A synthetic data generator script. It programmatically generates realistic network and web demo datasets (`demo_network.csv`, `demo_web.csv`, `train.csv.csv`, `test.csv.csv`). It injects specific signals and noise floors for "Attack" and "Benign" classes to simulate real-world data and validate the feature shift capabilities of the models.
+
+### Directory Structure
+- **`models/`**: Stores the pre-trained Machine Learning models (`network_model.pkl`, `web_model.pkl`) and their respective Label Encoders (`network_label_encoders.pkl`, `web_label_encoders.pkl`).
+- **`templates/`**: Contains the HTML views for the frontend:
+  - `login.html`: Initial authentication portal.
+  - `dashboard.html`: Main SOC dashboard.
+  - `upload.html`: Interface for uploading CSV or PCAP files.
+  - `result.html`: Displays parsed results, predictions, and severity badges with pagination.
+  - `live_monitor.html`: The hacker-style live packet sniffing console.
+- **`static/`**: Contains client-side assets:
+  - `style.css`: Custom vanilla CSS3 styling implementing the premium SOC dark-mode aesthetic.
+  - `dashboard.js`, `login.js`, `logs.js`, `detect.js`, `particles.js`: Frontend logic for charts, animations, and real-time live monitoring polling.
+- **`uploads/`**: A temporary working directory where user-uploaded CSVs, `.pcap` files, and the output `result_*.csv` files are stored and processed.
 
 ---
 
-## 🚀 Technology Stack
+## 🔬 How The Detection Works
 
-### Backend
-- **Framework:** Python / Flask
-- **Data Science:** Pandas, NumPy
-- **Machine Learning:** Scikit-learn (Random Forest, Label Encoding)
-- **Serialization:** Joblib
+### 1. Network Module
+Focuses on tracking connections and overall bandwidth anomalies. The model extracts stateful features:
+- `src_bytes` & `dst_bytes`
+- `logged_in`
+- Stateful Connection Counts: `count`, `srv_count`
+- Host Rates: `dst_host_srv_count`, `dst_host_same_srv_rate`
 
-### Frontend
-- **Structure:** HTML5, Semantic UI
-- **Styling:** Vanilla CSS3, Bootstrap 4 (SOC Dashboard Aesthetic)
-- **Charts:** Chart.js
-- **Animations:** Subtle micro-animations for a premium feel
+### 2. Web Module
+Focuses on detailed flow characteristics indicative of application-layer attacks (SQLi, XSS, etc.). The model uses:
+- Flow Timing: `Flow Duration`, `Flow Bytes/s`, `Flow Packets/s`
+- Packet Metrics: `Total Fwd Packets`, `Total Length of Fwd Packets`
+- Packet Means: `Fwd Packet Length Mean`, `Bwd Packet Length Mean`
+
+### 3. Real-Time Sniffing Engine
+When running `app.py`, a background thread uses `scapy.sniff()`. 
+- **Admin Privilege:** It captures L2 packets, checks protocols (TCP/UDP), measures payloads, and updates a stateful dictionary (`ip_flows`) to maintain a rolling `count` and `srv_count` per IP, feeding this live into the Random Forest model.
+- **Standard Privilege:** Falls back to a simulated packet generator to prevent crashes, producing realistic but synthetic log entries.
 
 ---
 
@@ -78,41 +92,19 @@ By analyzing patterns in network traffic and web requests, IntruGuard can distin
    pip install -r requirements.txt
    ```
 
-3. **Train Models (Optional - Demo models included)**
-   If you wish to retrain the models with fresh data:
+3. **Train Models / Generate Data (Optional)**
+   If you wish to regenerate the demo datasets or retrain the models from scratch:
    ```bash
+   python regenerate_demo_datasets.py
    python retrain_model.py
    ```
 
 4. **Run the Application**
+   Run the app. To enable real packet sniffing, run your terminal/command prompt as **Administrator**.
    ```bash
    python app.py
    ```
-   Access the dashboard at `http://127.0.0.1:5000`
-
----
-
-## 📂 Project Structure
-
-- `app.py`: The heart of the application; handles routing, ML logic, and packet sniffing.
-- `models/`: Stores pre-trained `.pkl` models and label encoders.
-- `templates/`: Contains HTML files for Dashboard, Live Monitor, and Login.
-- `static/`: CSS and JS assets for the frontend experience.
-- `uploads/`: Temporary storage for processed analysis results.
-
----
-
-## 📊 Sample Visuals
-
-> [!TIP]
-> **Dashboard View:** The main dashboard features solid-colored metric cards and a gradient-style chart system for maximum readability.
-> **Live Monitoring:** The live monitor uses a sleek "hacker-style" terminal output alongside structured data tables.
-
----
-
-## 🛠️ Performance Tuning
-
-To improve model accuracy for your specific environment, use the `retrain_model.py` script with your own datasets. The system is designed to achieve 95%+ accuracy on standard NIDS benchmarks.
+   Access the dashboard at `http://127.0.0.1:5000` (Default Credentials: admin / admin123 or user / user123).
 
 ---
 
